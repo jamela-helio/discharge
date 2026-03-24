@@ -1,6 +1,13 @@
 "use client";
 
+import { useCallback, useRef, useState } from "react";
 import { FormData } from "../types";
+import {
+  DetectedClause,
+  ParseResult,
+  highlightClauseText,
+  parseDocumentForClauses,
+} from "../utils/documentParser";
 
 interface Props {
   data: FormData;
@@ -57,7 +64,52 @@ function FormField({
   );
 }
 
+function ClauseCard({
+  clause,
+  index,
+  onToggle,
+}: {
+  clause: DetectedClause;
+  index: number;
+  onToggle: (i: number) => void;
+}) {
+  return (
+    <div
+      className={`rounded-xl border p-4 cursor-pointer transition-all ${
+        clause.selected
+          ? "border-yellow-400/50 bg-yellow-400/5"
+          : "border-white/10 bg-white/3 opacity-50"
+      }`}
+      onClick={() => onToggle(index)}
+    >
+      <div className="flex items-start gap-3">
+        <div
+          className={`mt-0.5 w-5 h-5 rounded flex-shrink-0 border flex items-center justify-center text-xs font-bold transition-colors ${
+            clause.selected
+              ? "bg-yellow-400/30 border-yellow-400/60 text-yellow-300"
+              : "border-white/20 text-white/20"
+          }`}
+        >
+          {clause.selected ? "✓" : ""}
+        </div>
+        <p
+          className="text-sm text-white/80 leading-relaxed"
+          dangerouslySetInnerHTML={{ __html: highlightClauseText(clause.text) }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function Step1Intake({ data, onChange, onNext }: Props) {
+  const [parseResult, setParseResult] = useState<ParseResult | null>(null);
+  const [clauses, setClauses] = useState<DetectedClause[]>([]);
+  const [parsing, setParsing] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [showManual, setShowManual] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const isValid =
     data.civicAddress.trim() &&
     data.pid.trim() &&
@@ -65,6 +117,54 @@ export default function Step1Intake({ data, onChange, onNext }: Props) {
     data.proposedUse.trim() &&
     data.hasDevelopmentAgreement !== null &&
     data.hasRestrictiveCovenant !== null;
+
+  const handleFile = useCallback(
+    async (file: File) => {
+      setParsing(true);
+      setParseError(null);
+      setParseResult(null);
+      setClauses([]);
+      onChange({ restrictingClauses: "" });
+
+      try {
+        const result = await parseDocumentForClauses(file);
+        setParseResult(result);
+        setClauses(result.clauses);
+
+        // Build combined text from auto-selected clauses
+        const selected = result.clauses.filter((c) => c.selected);
+        onChange({
+          restrictingClauses: selected.map((c) => c.text).join("\n\n"),
+        });
+      } catch (err) {
+        setParseError(
+          err instanceof Error ? err.message : "Failed to parse file."
+        );
+      } finally {
+        setParsing(false);
+      }
+    },
+    [onChange]
+  );
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragOver(false);
+      const file = e.dataTransfer.files[0];
+      if (file) handleFile(file);
+    },
+    [handleFile]
+  );
+
+  const toggleClause = (index: number) => {
+    const updated = clauses.map((c, i) =>
+      i === index ? { ...c, selected: !c.selected } : c
+    );
+    setClauses(updated);
+    const selected = updated.filter((c) => c.selected);
+    onChange({ restrictingClauses: selected.map((c) => c.text).join("\n\n") });
+  };
 
   return (
     <div className="animate-slide-up space-y-8">
@@ -75,9 +175,9 @@ export default function Step1Intake({ data, onChange, onNext }: Props) {
         </div>
         <h2 className="text-2xl font-bold text-white">Property Intake Form</h2>
         <p className="text-white/50 text-sm max-w-lg mx-auto">
-          Provide details about the subject property and the instruments found on
-          title. All processing happens locally — your data never leaves this
-          page.
+          Provide property details and upload your title document. Restricting
+          clauses are detected automatically. All processing is local — nothing
+          leaves this page.
         </p>
       </div>
 
@@ -181,8 +281,9 @@ export default function Step1Intake({ data, onChange, onNext }: Props) {
                     Restrictive Covenant (RC)
                   </p>
                   <p className="text-xs text-white/45 mt-0.5">
-                    A private restriction registered on title that limits how the
-                    land can be used, often more restrictive than current zoning.
+                    A private restriction registered on title that limits how
+                    the land can be used, often more restrictive than current
+                    zoning.
                   </p>
                 </div>
               </div>
@@ -194,18 +295,147 @@ export default function Step1Intake({ data, onChange, onNext }: Props) {
           </div>
         </div>
 
-        {/* Restricting clauses textarea */}
-        <FormField
-          label="Restricting Clause(s)"
-          hint='Paste the exact text of any restrictive covenant clauses from your title instruments. If no Restrictive Covenant, leave blank.'
-        >
-          <textarea
-            className="form-input min-h-[120px] resize-y"
-            placeholder={`Paste the exact restricting clause text here, e.g.:\n\n"The property shall not be used for any purpose other than a single-family dwelling and no building shall be erected thereon other than one single-family detached dwelling..."`}
-            value={data.restrictingClauses}
-            onChange={(e) => onChange({ restrictingClauses: e.target.value })}
-          />
-        </FormField>
+        {/* File upload + clause detection */}
+        <div className="border-t border-white/10 pt-6 space-y-4">
+          <div>
+            <p className="text-sm font-semibold text-white/70 uppercase tracking-wider mb-1">
+              Restricting Clause(s)
+            </p>
+            <p className="text-xs text-white/40">
+              Upload your title document (PDF, DOCX, or TXT) — restricting
+              clauses will be detected and highlighted automatically.
+            </p>
+          </div>
+
+          {/* Drop zone */}
+          <div
+            className={`relative rounded-xl border-2 border-dashed transition-all cursor-pointer ${
+              isDragOver
+                ? "border-indigo-400/70 bg-indigo-500/10"
+                : "border-white/20 hover:border-white/40 bg-white/3"
+            }`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragOver(true);
+            }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.docx,.doc,.txt"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleFile(file);
+              }}
+            />
+            <div className="p-8 text-center space-y-2">
+              {parsing ? (
+                <>
+                  <div className="text-3xl animate-spin inline-block">⏳</div>
+                  <p className="text-white/60 text-sm">Scanning document for clauses…</p>
+                </>
+              ) : parseResult ? (
+                <>
+                  <div className="text-3xl">✅</div>
+                  <p className="text-white/80 text-sm font-medium">
+                    {parseResult.fileName}
+                  </p>
+                  <p className="text-white/40 text-xs">
+                    {clauses.length} potential clause
+                    {clauses.length !== 1 ? "s" : ""} found —{" "}
+                    {clauses.filter((c) => c.selected).length} selected
+                  </p>
+                  <p className="text-indigo-300/60 text-xs">
+                    Click to upload a different file
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="text-3xl">📄</div>
+                  <p className="text-white/70 text-sm font-medium">
+                    Drop your title document here, or click to browse
+                  </p>
+                  <p className="text-white/30 text-xs">
+                    PDF, DOCX, or TXT — processed entirely in your browser
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+
+          {parseError && (
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-3 text-red-300 text-sm">
+              {parseError}
+            </div>
+          )}
+
+          {/* Detected clauses */}
+          {clauses.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-white/50 font-medium uppercase tracking-wider">
+                  Detected Restricting Clauses — click to select / deselect
+                </p>
+                <button
+                  type="button"
+                  className="text-xs text-indigo-300/70 hover:text-indigo-300 transition-colors"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const allSelected = clauses.every((c) => c.selected);
+                    const updated = clauses.map((c) => ({
+                      ...c,
+                      selected: !allSelected,
+                    }));
+                    setClauses(updated);
+                    onChange({
+                      restrictingClauses: updated
+                        .filter((c) => c.selected)
+                        .map((c) => c.text)
+                        .join("\n\n"),
+                    });
+                  }}
+                >
+                  {clauses.every((c) => c.selected)
+                    ? "Deselect all"
+                    : "Select all"}
+                </button>
+              </div>
+              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                {clauses.map((clause, i) => (
+                  <ClauseCard
+                    key={i}
+                    clause={clause}
+                    index={i}
+                    onToggle={toggleClause}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Manual fallback */}
+          <div className="pt-1">
+            <button
+              type="button"
+              className="text-xs text-white/40 hover:text-white/60 transition-colors underline underline-offset-2"
+              onClick={() => setShowManual((v) => !v)}
+            >
+              {showManual ? "Hide manual entry" : "Or type / paste clauses manually"}
+            </button>
+            {showManual && (
+              <textarea
+                className="form-input min-h-[120px] resize-y mt-3"
+                placeholder={`Paste the exact restricting clause text here, e.g.:\n\n"The property shall not be used for any purpose other than a single-family dwelling..."`}
+                value={data.restrictingClauses}
+                onChange={(e) => onChange({ restrictingClauses: e.target.value })}
+              />
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Next button */}
