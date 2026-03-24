@@ -41,10 +41,7 @@ const RESTRICTION_KEYWORDS = [
 /** Extract plain text from a PDF file using pdfjs-dist */
 async function extractPdfText(file: File): Promise<string> {
   const pdfjsLib = await import("pdfjs-dist");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/build/pdf.worker.mjs",
-    import.meta.url
-  ).toString();
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -54,7 +51,7 @@ async function extractPdfText(file: File): Promise<string> {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
     const pageText = content.items
-      .map((item: { str?: string }) => item.str ?? "")
+      .map((item) => ("str" in item ? item.str ?? "" : ""))
       .join(" ");
     pages.push(pageText);
   }
