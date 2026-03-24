@@ -96,6 +96,69 @@ function scoreClause(text: string): number {
   return score;
 }
 
+// Signals that a document is a Development Agreement
+const DA_SIGNALS = [
+  "development agreement",
+  "section 244",
+  "§244",
+  "s.244",
+  "s. 244",
+  "community council",
+  "municipality of halifax",
+  "halifax regional municipality",
+  "permitted uses and development",
+  "council may discharge",
+  "hrm charter",
+  "municipal planning strategy",
+  "land use bylaw",
+  "development officer",
+];
+
+// Signals that a document is a Restrictive Covenant
+const RC_SIGNALS = [
+  "restrictive covenant",
+  "deed restriction",
+  "building scheme",
+  "covenant",
+  "grantor",
+  "grantee",
+  "original developer",
+  "covenant holder",
+  "section 257",
+  "§257",
+  "s.257",
+  "s. 257",
+  "chief administrative officer",
+  "cao",
+  "private restriction",
+  "benefit of the remaining lots",
+  "runs with the land",
+];
+
+/** Detect whether a document contains a DA, RC, or both */
+export function detectInstrumentTypes(text: string): {
+  hasDA: boolean;
+  hasRC: boolean;
+  daConfidence: number;
+  rcConfidence: number;
+} {
+  const lower = text.toLowerCase();
+
+  const daConfidence = DA_SIGNALS.filter((s) =>
+    lower.includes(s.toLowerCase())
+  ).length;
+  const rcConfidence = RC_SIGNALS.filter((s) =>
+    lower.includes(s.toLowerCase())
+  ).length;
+
+  return {
+    hasDA: daConfidence >= 2,
+    hasRC: rcConfidence >= 2,
+    daConfidence,
+    rcConfidence,
+  };
+}
+
 export interface DetectedClause {
   text: string;
   score: number;
@@ -106,6 +169,10 @@ export interface ParseResult {
   clauses: DetectedClause[];
   fullText: string;
   fileName: string;
+  hasDA: boolean;
+  hasRC: boolean;
+  daConfidence: number;
+  rcConfidence: number;
 }
 
 /** Main entry point: parse a file and return detected clauses */
@@ -125,6 +192,9 @@ export async function parseDocumentForClauses(
     throw new Error(`Unsupported file type: .${ext}. Please upload PDF, DOCX, or TXT.`);
   }
 
+  const { hasDA, hasRC, daConfidence, rcConfidence } =
+    detectInstrumentTypes(fullText);
+
   const paragraphs = splitIntoParagraphs(fullText);
   const scored = paragraphs
     .map((text) => ({ text, score: scoreClause(text), selected: false }))
@@ -138,7 +208,7 @@ export async function parseDocumentForClauses(
     selected: c.score >= threshold && i < 8,
   }));
 
-  return { clauses, fullText, fileName: file.name };
+  return { clauses, fullText, fileName: file.name, hasDA, hasRC, daConfidence, rcConfidence };
 }
 
 /** Highlight restriction keywords in a clause text (returns HTML string) */

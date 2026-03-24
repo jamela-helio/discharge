@@ -131,11 +131,17 @@ export default function Step1Intake({ data, onChange, onNext }: Props) {
         setParseResult(result);
         setClauses(result.clauses);
 
+        // Auto-fill instrument toggles based on detected signals
+        const updates: Partial<FormData> = {};
+        if (result.hasDA || result.hasRC) {
+          updates.hasDevelopmentAgreement = result.hasDA;
+          updates.hasRestrictiveCovenant = result.hasRC;
+        }
+
         // Build combined text from auto-selected clauses
         const selected = result.clauses.filter((c) => c.selected);
-        onChange({
-          restrictingClauses: selected.map((c) => c.text).join("\n\n"),
-        });
+        updates.restrictingClauses = selected.map((c) => c.text).join("\n\n");
+        onChange(updates);
       } catch (err) {
         setParseError(
           err instanceof Error ? err.message : "Failed to parse file."
@@ -344,7 +350,24 @@ export default function Step1Intake({ data, onChange, onNext }: Props) {
                   <p className="text-white/80 text-sm font-medium">
                     {parseResult.fileName}
                   </p>
-                  <p className="text-white/40 text-xs">
+                  <div className="flex gap-2 justify-center flex-wrap mt-1">
+                    {parseResult.hasDA && (
+                      <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 text-xs font-medium">
+                        📋 Development Agreement detected
+                      </span>
+                    )}
+                    {parseResult.hasRC && (
+                      <span className="px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-400/30 text-purple-300 text-xs font-medium">
+                        🔒 Restrictive Covenant detected
+                      </span>
+                    )}
+                    {!parseResult.hasDA && !parseResult.hasRC && (
+                      <span className="px-2 py-0.5 rounded-full bg-white/10 border border-white/20 text-white/40 text-xs">
+                        No instrument type detected — set manually below
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-white/40 text-xs mt-1">
                     {clauses.length} potential clause
                     {clauses.length !== 1 ? "s" : ""} found —{" "}
                     {clauses.filter((c) => c.selected).length} selected
