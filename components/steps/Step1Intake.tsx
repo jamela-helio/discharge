@@ -102,7 +102,7 @@ function ClauseCard({
 }
 
 export default function Step1Intake({ data, onChange, onNext }: Props) {
-  const [parseResult, setParseResult] = useState<ParseResult | null>(null);
+  const [parseResults, setParseResults] = useState<ParseResult[]>([]);
   const [clauses, setClauses] = useState<DetectedClause[]>([]);
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -118,33 +118,41 @@ export default function Step1Intake({ data, onChange, onNext }: Props) {
     data.hasDevelopmentAgreement !== null &&
     data.hasRestrictiveCovenant !== null;
 
-  const handleFile = useCallback(
-    async (file: File) => {
+  const handleFiles = useCallback(
+    async (files: File[]) => {
+      if (!files.length) return;
       setParsing(true);
       setParseError(null);
-      setParseResult(null);
+      setParseResults([]);
       setClauses([]);
       onChange({ restrictingClauses: "" });
 
       try {
-        const result = await parseDocumentForClauses(file);
-        setParseResult(result);
-        setClauses(result.clauses);
+        const results = await Promise.all(
+          files.map((f) => parseDocumentForClauses(f))
+        );
+        setParseResults(results);
 
-        // Auto-fill instrument toggles based on detected signals
+        // Merge clauses from all files
+        const allClauses = results.flatMap((r) => r.clauses);
+        setClauses(allClauses);
+
+        // Auto-fill instrument toggles — true if any file detects it
         const updates: Partial<FormData> = {};
-        if (result.hasDA || result.hasRC) {
-          updates.hasDevelopmentAgreement = result.hasDA;
-          updates.hasRestrictiveCovenant = result.hasRC;
+        const anyDA = results.some((r) => r.hasDA);
+        const anyRC = results.some((r) => r.hasRC);
+        if (anyDA || anyRC) {
+          updates.hasDevelopmentAgreement = anyDA;
+          updates.hasRestrictiveCovenant = anyRC;
         }
 
         // Build combined text from auto-selected clauses
-        const selected = result.clauses.filter((c) => c.selected);
+        const selected = allClauses.filter((c) => c.selected);
         updates.restrictingClauses = selected.map((c) => c.text).join("\n\n");
         onChange(updates);
       } catch (err) {
         setParseError(
-          err instanceof Error ? err.message : "Failed to parse file."
+          err instanceof Error ? err.message : "Failed to parse file(s)."
         );
       } finally {
         setParsing(false);
@@ -157,10 +165,10 @@ export default function Step1Intake({ data, onChange, onNext }: Props) {
     (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragOver(false);
-      const file = e.dataTransfer.files[0];
-      if (file) handleFile(file);
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length) handleFiles(files);
     },
-    [handleFile]
+    [handleFiles]
   );
 
   const toggleClause = (index: number) => {
@@ -332,36 +340,41 @@ export default function Step1Intake({ data, onChange, onNext }: Props) {
               ref={fileInputRef}
               type="file"
               accept=".pdf,.docx,.doc,.txt"
+              multiple
               className="hidden"
               onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleFile(file);
+                const files = Array.from(e.target.files ?? []);
+                if (files.length) handleFiles(files);
               }}
             />
             <div className="p-8 text-center space-y-2">
               {parsing ? (
                 <>
                   <div className="text-3xl animate-spin inline-block">⏳</div>
-                  <p className="text-white/60 text-sm">Scanning document for clauses…</p>
+                  <p className="text-white/60 text-sm">Scanning documents for clauses…</p>
                 </>
-              ) : parseResult ? (
+              ) : parseResults.length > 0 ? (
                 <>
                   <div className="text-3xl">✅</div>
-                  <p className="text-white/80 text-sm font-medium">
-                    {parseResult.fileName}
-                  </p>
-                  <div className="flex gap-2 justify-center flex-wrap mt-1">
-                    {parseResult.hasDA && (
+                  <div className="space-y-1">
+                    {parseResults.map((r, i) => (
+                      <p key={i} className="text-white/70 text-xs font-medium">
+                        📄 {r.fileName}
+                      </p>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 justify-center flex-wrap mt-2">
+                    {parseResults.some((r) => r.hasDA) && (
                       <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 text-xs font-medium">
                         📋 Development Agreement detected
                       </span>
                     )}
-                    {parseResult.hasRC && (
+                    {parseResults.some((r) => r.hasRC) && (
                       <span className="px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-400/30 text-purple-300 text-xs font-medium">
                         🔒 Restrictive Covenant detected
                       </span>
                     )}
-                    {!parseResult.hasDA && !parseResult.hasRC && (
+                    {!parseResults.some((r) => r.hasDA) && !parseResults.some((r) => r.hasRC) && (
                       <span className="px-2 py-0.5 rounded-full bg-white/10 border border-white/20 text-white/40 text-xs">
                         No instrument type detected — set manually below
                       </span>
@@ -373,17 +386,17 @@ export default function Step1Intake({ data, onChange, onNext }: Props) {
                     {clauses.filter((c) => c.selected).length} selected
                   </p>
                   <p className="text-indigo-300/60 text-xs">
-                    Click to upload a different file
+                    Click to upload different files
                   </p>
                 </>
               ) : (
                 <>
                   <div className="text-3xl">📄</div>
                   <p className="text-white/70 text-sm font-medium">
-                    Drop your title document here, or click to browse
+                    Drop your title documents here, or click to browse
                   </p>
                   <p className="text-white/30 text-xs">
-                    PDF, DOCX, or TXT — processed entirely in your browser
+                    PDF, DOCX, or TXT — multiple files supported — processed entirely in your browser
                   </p>
                 </>
               )}
